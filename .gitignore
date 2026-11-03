@@ -18,3 +18,10 @@ android/**/build/
 android/app/src/main/assets/public/
 android/app/src/main/assets/capacitor.config.json
 android/app/src/main/assets/capacitor.plugins.json
+
+# React Native generated projects and Metro output
+apps/native/android/
+apps/native/ios/
+apps/native/.expo/
+apps/native/export/
+apps/native/google-services.json
