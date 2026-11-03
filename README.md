@@ -1,166 +1,105 @@
 # VEYRA
 
-VEYRA is a cinematic React/Vite streaming client packaged for Android with
-Capacitor. It browses and plays a real catalogue served by the **ZST Labs**
-provider through a VEYRA-controlled API layer: the client holds no credential
-and knows nothing about the provider's shapes.
+VEYRA is a cinematic React 19 + Vite streaming app, packaged for Android with Capacitor. It browses and streams the **ZST Labs MovieBox API** (`https://api.zstlab.cyou`): a real catalog, real progress, real playback in a standard `<video>` element, and best-effort downloads with honest states.
 
-```
-VEYRA client  →  VEYRA API layer (server/)  →  ZST Labs  →  VEYRA player
+- No auth, no accounts, no device management, no push notifications, no multi-device sync, no backend service.
+- My List, history, download attempts and preferences live in `localStorage` on the device.
+- VEYRA never falls back to sample titles, never simulates playback with a timer, and never opens an external video site.
+
+## Catalog API configuration
+
+**There is nothing to configure.** The ZST Labs endpoint and key are compiled into the app, so a fresh clone, `npm run dev`, the web build and the Android APK all talk to the real catalog with no `.env.local`, no repository secret and no extra setup:
+
+```js
+// src/services/moviebox/client.js
+export const DEFAULT_API_BASE_URL = 'https://api.zstlab.cyou';
+export const DEFAULT_API_KEY = 'zst_enmXGDIVEwb078T0xgSCeHau7aFsE8NkdI2czeTz';
 ```
 
-See [the verified API contract](docs/ZST_LABS_MOVIEBOX_API.md) for the route
-inventory, response shapes, verification status and the media/security boundary.
+Environment variables exist only as an **override** — for example to point a build at another deployment (`.env.example` documents them):
+
+```dotenv
+# optional; both values already have working defaults
+VITE_MOVIEBOX_API_BASE_URL=https://api.zstlab.cyou
+VITE_ZST_API_KEY=zst_...
+```
+
+Build-time environment wins when it is set; anything blank or missing falls back to the built-in values, so a blank variable can never break a working configuration. The Android workflow (`.github/workflows/android-apk.yml`) needs no secrets: it builds from the defaults and fails the job if the endpoint and key are missing from the produced bundle.
+
+> **About the API key.** `VITE_*` values are compiled into the web bundle and the APK, so anyone who has the app can read the key — that is true by design here, because this project has no backend that could hold a secret on its behalf. The provider authenticates the *app*, not the person. Keep the repository private if you like, but treat the key as public: it is sent as the `x-api-key` header on every catalog request. If it is rotated or revoked, `/api/*` answers 401/403 and each catalog screen shows an explicit "the API rejected this build's key" message with a retry. To use a different key, put it in `.env.local` (git-ignored) or edit `DEFAULT_API_KEY`.
 
 ## Run locally
 
 ```bash
 npm ci
-npm run api     # VEYRA API layer on :8787 (needs ZST_API_KEY in the environment)
-npm run dev     # web client on :5173; the dev server mounts the same routes
+npm run dev                  # already talks to the real catalog
 ```
 
-With `VITE_VEYRA_API_BASE_URL` empty the client calls its own origin, so during
-development the whole stack runs behind one port. Vite binds to `0.0.0.0`.
-
-## Configuration
-
-Public build configuration:
-
-- `VITE_VEYRA_API_BASE_URL` — base URL of the VEYRA API layer, compiled into the
-  web bundle and the Android assets. Leave empty for same origin. A Capacitor
-  build always needs an absolute `https://` URL.
-
-Server-only configuration (never in `VITE_*`, never in the repository):
-
-- `ZST_API_KEY` — the provider credential, read by `server/` at call time.
-- `ZST_API_BASE_URL` — defaults to `https://zstlab.cyou/api`.
-- `ZST_MEDIA_PROXY_BASE_URL` — defaults to `https://api.zstlab.cyou`.
-- `VEYRA_CORS_ORIGINS` — optional comma-separated extra allowed origins.
-- `ZST_RATE_LIMIT_COOLDOWN_MS` — optional. Cooldown after the provider answers
-  `429` (default: `Retry-After`, capped at 120 s, else 30 s; `0` disables it).
-
-Deploy the API layer to any Node host and set the client's base URL to it. In
-the Android workflow the public base comes from the `VEYRA_API_BASE_URL`
-repository variable, so no secret is ever part of an APK.
-
-## What the app does
-
-- **Home** — the provider's own featured banner as a carousel plus every content
-  rail it returned (Popular Series, Popular Movie, Nollywood, K-Drama, Coming
-  Soon…). Promotional sections (`Get the VIP!`, channels, shorts) are filtered
-  out, and rails with no titles are never rendered.
-- **Discover / Search** — real trending and hot lists, debounced abortable
-  search with provider suggestions, real popular searches, pagination, and
-  honest loading, empty and error states.
-- **Details** — real title metadata, cast from `data.stars`, real season and
-  episode counts, and recommendations from the provider.
-- **Player** — a real HTML5 player over the resolved stream: play/pause, seek,
-  ±10s, mute, fullscreen, buffering, quality switching that re-resolves the
-  stream, subtitle tracks from the title's real captions, episode switching,
-  next episode, retry, and a fallback to the direct CDN URL if the proxy fails.
-- **Downloads** — a real queue with `queued → downloading → paused / failed →
-  completed → removing`, measured byte progress, and Range resume. The URL is
-  always the one the API layer authorized.
-- **Library** — My List, history, Continue Watching and playback progress
-  persist on the device. Continue Watching only appears with real progress.
-- **TV** — a dedicated large-screen layout with sidebar navigation and spatial
-  D-pad movement (`src/tv.js`).
-- **Offline** — connectivity is a state, not a different universe: the current
-  screen stays and a subtle banner appears with a retry.
-
-## Data flow
-
-```
-UI screens
-   └─ src/services/catalog.js        catalog reads, short-lived cache
-   └─ src/services/media.js          playback, subtitles, download metadata
-   └─ src/services/downloads.js      the download queue
-        └─ src/services/api/client.js      the only HTTP transport
-             └─ src/services/api/normalize.js   model guards
-                  └─ VEYRA API  /api/veyra/*
-                       └─ server/providers/zst.js    holds ZST_API_KEY
-                            └─ server/normalize.js   provider → VEYRA models
-```
-
-No component builds a media URL, reads a credential, or sees a provider field
-name. Signed playback URLs are cached for at most 90 seconds and re-resolved on
-demand; catalogue metadata is cached briefly on both sides.
-
-## Local persistence
-
-| Key | Contents |
-| --- | --- |
-| `veyra-list:v2` | Saved title references for My List |
-| `veyra-history:v2` | Watch history, per-episode progress and completion state |
-| `veyra-searches:v3` | Recent searches |
-| `veyra-settings:v2` | Appearance and playback preferences |
-| `veyra-downloads:v1` | Download records and their state |
-| `veyra-welcome:v1` | Whether the welcome screen has been seen |
+Vite binds to `0.0.0.0`. If the configuration is ever empty or malformed, the app fails closed: catalog screens show an explicit configuration message with a retry, and no fixture content is rendered.
 
 ## Checks
 
 ```bash
-npm test          # 79 unit tests: provider normalization, model guards, catalog
-                  # mapping and caching, media resolution, download state machine,
-                  # library persistence, copy mapping, TV navigation, rate-limit
-                  # circuit breaker, playback fallback selection
-npm run smoke:zst # live smoke tests against the real provider (needs ZST_API_KEY);
-                  # 12 checks covering every confirmed endpoint + real source extraction
-npm run build     # production web build (dist/)
+npm test           # service-layer unit tests (normalizer, media, subtitles, client)
+npm run test:ssr   # renders every screen through Vite SSR with real catalog shapes
+npm run test:player # mounts the real player in a DOM and asserts the <video> gets a streamUrl
+npm run build      # production bundle
+npm run verify     # all four
 ```
+
+`test:player` exists because a media response is not playback: it feeds the real client a
+`/api/media` payload and fails if the `<video>` element ends up without a `src`, if the raw CDN
+url is bound instead of the provider proxy link, or if the UI says PLAYING while the element has
+no frames.
 
 ## Android debug APK
 
-Requirements: Node.js 22, JDK 21, Android SDK platform/build tools 35.
+Requirements: Node.js 22, JDK 21, Android SDK platform and build tools 35.
 
 ```bash
 npm ci
-VITE_VEYRA_API_BASE_URL=https://your-veyra-api.example npm run build
+npm run build
 npx cap sync android
 cd android && ./gradlew assembleDebug
 ```
 
-The APK is written to `android/app/build/outputs/apk/debug/app-debug.apk`. The
-GitHub Actions `Android APK` workflow builds and uploads the debug artifact; it
-fails loudly if the `VEYRA_API_BASE_URL` repository variable is not set, so a
-credential-free APK can never be published pointing at nothing.
+The APK lands in `android/app/build/outputs/apk/debug/app-debug.apk`. The GitHub Actions `Android APK` workflow runs the unit tests, the render smoke test, the web build and the Gradle build, then uploads the debug artifact. Release signing is not configured.
+
+## What is wired to the provider
+
+| Screen | Provider route |
+| --- | --- |
+| Home rails, hero, provider notice | `GET /api/homepage` |
+| Trending rail | `GET /api/trending?page=0&perPage=18` |
+| Hot movies & series rail | `GET /api/hot-movies-series` |
+| Search idle state | `GET /api/popular-searches` |
+| Search + load more | `GET /api/search?query=&subjectType=ALL\|MOVIES\|TV_SERIES&page=&perPage=` (`q` is used only if `query` returns nothing) |
+| Search suggestions | `GET /api/search-suggestion?q=` |
+| Details, seasons, cast | `GET /api/item-details?subjectId=&detailPath=` |
+| "More like this" | `GET /api/recommendations?subjectId=` |
+| Playback and captions | `GET /api/media?subjectId=&detailPath=&season=&episode=` |
+
+Movies use `season=0&episode=0`; series use the real season and episode numbers the provider returns. Stream links are signed and expire, so media is cached for at most 60 seconds and re-requested on every play and quality change.
+
+**Playback** uses `streamUrl` only — never the raw CDN `url`, which answers 429 without the provider proxy. Streams are progressive MP4 (`hls` and `dash` are empty), played in a plain `<video>` element with play/pause, a timeline, ±10s, a quality menu, a subtitle menu and an episodes menu for series. If a stream times out, is refused or errors, VEYRA steps down to the next lower quality and then reports “Source busy. Try again.” (about 20 seconds per attempt, never an endless spinner).
+
+**Subtitles** show only the languages the provider actually returns, converted from SubRip to WebVTT and fetched through the provider's `/api/proxy` route.
+
+**Downloads** are best effort. VEYRA asks the provider's `downloadUrl` for its first byte and gives up after 20 seconds; if the provider's proxy-download route hangs (it is under maintenance), the attempt is recorded as unavailable. No progress bars are faked and no files are invented.
+
+## Local storage
+
+| Key | Contents |
+| --- | --- |
+| `veyra-list:v2` | My List — compact provider references |
+| `veyra-history:v2` | Real playback records (`position`, `duration`, `percent`, `updatedAt`) |
+| `veyra-settings:v2` | Subtitle language and appearance |
+| `veyra-downloads:v1` | Download attempts and their provider results |
+
+History is written only by actual playback (throttled `timeupdate`, pause, unmount, end). Continue Watching lists records between 2% and 95% complete with the season/episode label and minutes left. The history artwork opens the title; the X button removes the row.
 
 ## Verification status
 
-Verified in this workspace on 2026-10-08:
+`/api/homepage`, `/api/trending`, `/api/popular-searches`, `/api/hot-movies-series`, `/api/search`, `/api/search-suggestion`, `/api/item-details`, `/api/recommendations` and `/api/media` were all checked against the live API while this work was done (see [docs/MOVIEBOX_INTEGRATION.md](docs/MOVIEBOX_INTEGRATION.md) for the exact observations and the response shapes). `/api/media` returned three progressive MP4 qualities plus 15 caption languages for `Inception` (`subjectId 6391474290696802080`, `detailPath inception-e1BOR6f19C7`).
 
-- `npm test` — 79 tests, 79 passing.
-- `npm run build` — production build succeeds.
-- `npm run smoke:zst` — 12 checks, 12 passing against the live provider:
-  homepage (52 operations), trending, hot movies/series, popular searches,
-  search suggestions, search, item details with cast, recommendations, media
-  resolution for a movie and for a TV episode, proxy reachability, and real
-  signed stream-source extraction.
-- **Live provider integration** through the VEYRA API layer: health, homepage
-  (18 featured titles, 30 content rails), trending, hot, popular searches,
-  search, suggestions, details with cast, episodes, recommendations, media
-  resolution with real qualities and captions, per-quality stream
-  re-resolution, and download URL construction.
-- **Rate-limit handling** — a provider `429` opens a circuit breaker: no
-  in-process retry, follow-up calls fail fast without touching the network,
-  `Retry-After` honoured, 429 never auto-retried client-side. Unit-tested in
-  `server/zst-rate-limit.test.js` + `src/services/errors.test.js` and
-  confirmed live (cooldown answers in ~1 ms instead of ~900 ms of retries).
-- **Honest failure states (browser-verified)** — a title with no playable
-  resource says “This title isn’t available to play.” instead of blaming the
-  connection; playback fallbacks always cross subsystems (proxy → raw CDN), so
-  a relay outage is recoverable; and the details screen renders the provider's
-  cast records instead of crashing the screen (a shape mismatch previously
-  blanked every title with a cast).
-
-Not verified here, and not claimed:
-
-- **Video bytes.** The provider's CDN answered `429` and its proxy answered a
-  timeout for this datacenter IP. Playback must be confirmed on a real network.
-- **Android APK / Gradle build** — no JDK or Android SDK in this sandbox. CI is
-  the only verified path to an APK.
-- **Native file persistence for downloads** — the queue and transfer are real
-  and tested, but writing to device storage needs a Capacitor filesystem plugin
-  on a real device.
-- Real-device touch targets, hardware back button and low-end performance.
+Browser CORS behaviour, Android runtime networking, signed-link lifetimes, long-session streaming stability and real-device playback are **not verified** from the build environment. Downloads on the provider side are currently unreliable by design of the service, not of this app.
