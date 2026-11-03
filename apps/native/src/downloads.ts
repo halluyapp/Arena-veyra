@@ -1,3 +1,4 @@
+import { toByteArray } from 'base64-js';
 import AsyncStorage from "@react-native-async-storage/async-storage";
 import * as FS from "expo-file-system/legacy";
 import {
@@ -129,7 +130,7 @@ class Downloads {
         length: 12,
       });
       // Only decode twelve bytes, never the entire movie.
-      const bytes = Array.from(atob(prefix)).map((c) => c.charCodeAt(0));
+      const bytes = Array.from(toByteArray(prefix));
       if (!validateCompleted(info.size, record.expected, bytes)) return false;
       return await validateMp4Atoms(info.size, async (position, length) => {
         const data = await FS.readAsStringAsync(record.path, {
@@ -137,7 +138,7 @@ class Downloads {
           position,
           length,
         });
-        return Uint8Array.from(atob(data), (c) => c.charCodeAt(0));
+        return toByteArray(data);
       });
     } catch {
       return false;

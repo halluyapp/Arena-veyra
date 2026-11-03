@@ -207,3 +207,17 @@ test("expired URL resume re-resolves and restarts rather than unsafe append", as
   assert.equal(old.state, "STOPPED");
   assert.equal(downloads.records[0].bytes, 0);
 });
+
+test('completion works on Hermes without browser atob globals', async () => {
+  const previous = globalThis.atob;
+  globalThis.atob = undefined;
+  try {
+    const { downloads, tasks, driver } = await setup();
+    await downloads.queue(movie, undefined, 480);
+    const record = downloads.records[0];
+    driver.files.set(record.path, mp4);
+    tasks.get(record.id).handlers.done();
+    await tick();
+    assert.equal(downloads.records[0].state, 'completed');
+  } finally { globalThis.atob = previous; }
+});
