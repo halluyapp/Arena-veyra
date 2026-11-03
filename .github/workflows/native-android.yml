@@ -50,7 +50,7 @@ jobs:
       - name: Generate Android phone and TV project
         run: npm run prebuild
       - name: Build installable standalone APK
-        run: ./gradlew --no-daemon assembleRelease -PreactNativeArchitectures=arm64-v8a,x86_64 --stacktrace
+        run: ./gradlew --no-daemon assembleRelease -PreactNativeArchitectures=armeabi-v7a,arm64-v8a,x86_64 --stacktrace
         working-directory: apps/native/android
       - name: Verify APK
         run: test -s android/app/build/outputs/apk/release/app-release.apk

@@ -78,7 +78,7 @@ npm run typecheck
 npm run export
 npm run prebuild
 # With JDK 17 and Android SDK available:
-cd android && ./gradlew assembleRelease -PreactNativeArchitectures=arm64-v8a,x86_64
+cd android && ./gradlew assembleRelease -PreactNativeArchitectures=armeabi-v7a,arm64-v8a,x86_64
 ```
 
 Set `EXPO_PUBLIC_VEYRA_API_BASE_URL` to the deployed **HTTPS VEYRA API**, not the
