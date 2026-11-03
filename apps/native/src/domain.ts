@@ -40,3 +40,25 @@ export function validateCompleted(size: number, expected: number, signature: num
   return size > 0 && (!expected || size === expected) &&
     signature.length >= 8 && String.fromCharCode(...signature.slice(4, 8)) === 'ftyp';
 }
+/** Validate top-level MP4 atoms without loading video payload into JS memory. */
+export async function validateMp4Atoms(size: number, read: (offset: number, length: number) => Promise<Uint8Array>) {
+  let offset = 0; let ftyp = false; let moov = false; let mdat = false;
+  const u32 = (b: Uint8Array, n: number) => b[n] * 2 ** 24 + b[n+1] * 2 ** 16 + b[n+2] * 256 + b[n+3];
+  for (let count = 0; offset < size && count < 4096; count++) {
+    if (size - offset < 8) return false;
+    const bytes = await read(offset, Math.min(16, size - offset));
+    if (bytes.length < 8) return false;
+    const kind = String.fromCharCode(...bytes.slice(4,8));
+    let length = u32(bytes,0); let header = 8;
+    if (length === 1) {
+      if (bytes.length < 16) return false;
+      length = u32(bytes,8) * 2 ** 32 + u32(bytes,12); header = 16;
+    } else if (length === 0) length = size - offset;
+    if (!Number.isSafeInteger(length) || length < header || offset + length > size) return false;
+    if (kind === 'ftyp') ftyp = true;
+    if (kind === 'moov' && length > header) moov = true;
+    if (kind === 'mdat' && length > header) mdat = true;
+    offset += length;
+  }
+  return offset === size && ftyp && moov && mdat;
+}

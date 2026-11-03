@@ -4,7 +4,7 @@ import { createDownloadTask, getExistingDownloadTasks, setConfig, completeHandle
 import type { DownloadTask } from '@kesha-antonov/react-native-background-downloader';
 import { PermissionsAndroid, Platform } from 'react-native';
 import { api } from './api';
-import { Title, Episode, MEDIA_HEADERS, playbackKey, safeHttps, validateCompleted } from './domain';
+import { Title, Episode, MEDIA_HEADERS, playbackKey, safeHttps, validateCompleted, validateMp4Atoms } from './domain';
 export type Download = { id: string; item: Title; episode?: Episode; quality: number; state: 'queued'|'downloading'|'paused'|'failed'|'completed'|'removing'; bytes: number; expected: number; path: string; error?: string; expiresAt?: number };
 const KEY = 'veyra-native-downloads:v1';
 const directory = `${FS.documentDirectory}downloads/`;
@@ -25,14 +25,14 @@ class Downloads {
   patch(id: string, changes: Partial<Download>) {
     this.records = this.records.map(r => r.id === id ? { ...r, ...changes } : r); this.emit();
   }
-  init() { return this.initialized ??= this.restore(); }
+  init() { return this.initialized ??= this.restore().catch(error => { this.initialized = undefined; throw error; }); }
   private async restore() {
     await FS.makeDirectoryAsync(directory, { intermediates: true });
     setConfig({ headers: MEDIA_HEADERS, showNotificationsEnabled: true, showCompletionNotification: false,
       showCancelAction: false, maxParallelDownloads: 2, progressInterval: 1000 });
     const raw = await AsyncStorage.getItem(KEY);
     try { this.records = raw ? JSON.parse(raw) : []; } catch { this.records = []; }
-    this.records = this.records.filter(r => r.id && r.path?.startsWith(directory));
+    this.records = (Array.isArray(this.records) ? this.records : []).filter(r => r.id && r.item?.id && r.path?.startsWith(directory));
     const tasks = await getExistingDownloadTasks();
     for (const record of this.records) {
       if (record.state === 'removing') { await FS.deleteAsync(record.path, { idempotent: true }); continue; }
@@ -59,7 +59,11 @@ class Downloads {
       const prefix = await FS.readAsStringAsync(record.path, { encoding: FS.EncodingType.Base64, position: 0, length: 12 });
       // Only decode twelve bytes, never the entire movie.
       const bytes = Array.from(atob(prefix)).map(c => c.charCodeAt(0));
-      return validateCompleted(info.size, record.expected, bytes);
+      if (!validateCompleted(info.size, record.expected, bytes)) return false;
+      return await validateMp4Atoms(info.size, async (position, length) => {
+        const data = await FS.readAsStringAsync(record.path, { encoding: FS.EncodingType.Base64, position, length });
+        return Uint8Array.from(atob(data), c => c.charCodeAt(0));
+      });
     } catch { return false; }
   }
   async localUri(record: Download) {
@@ -70,6 +74,7 @@ class Downloads {
     const record = this.records.find(r => r.id === id);
     if (!record || record.state === 'removing') return;
     if (await this.valid(record)) {
+      if (this.records.find(r => r.id === id)?.state === 'removing') return;
       const info = await FS.getInfoAsync(record.path);
       this.patch(id, { state: 'completed', bytes: info.exists && !info.isDirectory ? info.size : record.bytes, error: '' });
     } else this.patch(id, { state: 'failed', error: 'The saved video is incomplete or invalid. Retry the download.' });
@@ -79,7 +84,7 @@ class Downloads {
     this.tasks.set(task.id, task);
     task.begin(({ expectedBytes, headers }) => {
       const record = this.records.find(r => r.id === task.id);
-      if (!record || record.state === 'removing') return;
+      if (!record || record.state === 'removing' || this.tasks.get(task.id) !== task) return;
       const type = Object.entries(headers).find(([k]) => k.toLowerCase() === 'content-type')?.[1] || '';
       if (/text\/|json/i.test(type)) { void task.stop(); this.patch(task.id, { state: 'failed', error: 'The server returned a page instead of a video.' }); return; }
       if (record.expected && expectedBytes > 0 && record.expected !== expectedBytes) {
@@ -88,8 +93,9 @@ class Downloads {
       this.patch(task.id, { expected: record.expected || Math.max(0, expectedBytes) });
     }).progress(({ bytesDownloaded }) => {
       const record = this.records.find(r => r.id === task.id);
-      if (record?.state === 'downloading') this.patch(task.id, { bytes: bytesDownloaded });
-    }).done(() => { void this.finish(task.id); }).error(() => {
+      if (record?.state === 'downloading' && this.tasks.get(task.id) === task) this.patch(task.id, { bytes: bytesDownloaded });
+    }).done(() => { if (this.tasks.get(task.id) === task) void this.finish(task.id); }).error(() => {
+      if (this.tasks.get(task.id) !== task) return;
       const record = this.records.find(r => r.id === task.id);
       if (record && !['removing', 'paused'].includes(record.state)) this.patch(task.id, { state: 'failed', error: 'Download stopped. Check your connection and free space, then retry.' });
       this.tasks.delete(task.id);
@@ -114,6 +120,9 @@ class Downloads {
       this.records = [record, ...this.records.filter(r => r.id !== id)]; this.emit();
       const task = createDownloadTask({ id, url: descriptor.url, destination: path.replace(/^file:\/\//, ''), headers: MEDIA_HEADERS, metadata: { id }, notificationTitle: item.title });
       this.attach(task); this.patch(id, { state: 'downloading' }); task.start();
+    } catch (error) {
+      if (this.records.some(r => r.id === id)) this.patch(id, { state: 'failed', error: 'Could not start this download. Check your connection and storage.' });
+      throw error;
     } finally { this.locks.delete(id); }
   }
   async pause(id: string) {

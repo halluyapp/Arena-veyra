@@ -1,0 +1,40 @@
+diff --git a/node_modules/@kesha-antonov/react-native-background-downloader/android/src/main/java/com/eko/ResumableDownloader.kt b/node_modules/@kesha-antonov/react-native-background-downloader/android/src/main/java/com/eko/ResumableDownloader.kt
+index f4f7b30..d6b4f64 100644
+--- a/node_modules/@kesha-antonov/react-native-background-downloader/android/src/main/java/com/eko/ResumableDownloader.kt
++++ b/node_modules/@kesha-antonov/react-native-background-downloader/android/src/main/java/com/eko/ResumableDownloader.kt
+@@ -545,19 +545,23 @@ class ResumableDownloader {
+           }
+         }
+         HttpURLConnection.HTTP_PARTIAL -> {
+-          // Partial content - resuming supported
+-          val contentRange = connection.getHeaderField("Content-Range")
+-          if (contentRange != null) {
+-            // Format: bytes start-end/total
+-            val total = contentRange.substringAfter("/").toLongOrNull()
+-            if (total != null) {
+-              state.bytesTotal = total
+-            }
+-          }
+-
+-          if (state.bytesTotal <= 0) {
+-            state.bytesTotal = startByte + connection.contentLengthLong
++          // VEYRA: never append a partial response unless the byte range matches
++          // the local offset and the previously known resource length.
++          val range = Regex("bytes ([0-9]+)-([0-9]+)/([0-9]+)")
++            .matchEntire(connection.getHeaderField("Content-Range") ?: "")
++          val rangeStart = range?.groupValues?.get(1)?.toLongOrNull()
++          val rangeEnd = range?.groupValues?.get(2)?.toLongOrNull()
++          val rangeTotal = range?.groupValues?.get(3)?.toLongOrNull()
++          val length = connection.contentLengthLong
++          if (rangeStart == null || rangeEnd == null || rangeTotal == null ||
++              rangeStart != startByte || rangeEnd < rangeStart || rangeEnd >= rangeTotal ||
++              (length >= 0 && length != rangeEnd - rangeStart + 1) ||
++              (state.bytesTotal > 0 && state.bytesTotal != rangeTotal)) {
++            val error = DownloadResult.httpError(state.id, 206, "Invalid Content-Range; refusing unsafe append")
++            listener.onError(state.id, error.message, error.errorCode)
++            return error
+           }
++          state.bytesTotal = rangeTotal
+ 
+           // Only call onBegin if this is a fresh start (not resume)
+           if (!state.hasReportedBegin) {

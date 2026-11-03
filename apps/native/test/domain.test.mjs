@@ -21,3 +21,10 @@ test('completed download requires measured size and MP4 signature',()=>assert.eq
 test('short transfer never completes',()=>assert.equal(validateCompleted(99,100,signature),false));
 test('HTML response never completes',()=>assert.equal(validateCompleted(100,100,[60,104,116,109,108,62,32,32]),false));
 test('empty transfer never completes',()=>assert.equal(validateCompleted(0,0,signature),false));
+import { validateMp4Atoms } from '../src/domain.ts';
+const atom=(name,payload=[])=>{const length=8+payload.length;return [0,0,0,length,...Array.from(name).map(c=>c.charCodeAt(0)),...payload];};
+const mp4=Uint8Array.from([...atom('ftyp',[109,112,52,50]),...atom('moov',[0,0,0,0]),...atom('mdat',[1,2,3,4])]);
+test('complete MP4 atom layout validates without reading payload',async()=>{const reads=[];assert.equal(await validateMp4Atoms(mp4.length,async(offset,length)=>{reads.push(length);return mp4.slice(offset,offset+length);}),true);assert.ok(reads.every(n=>n<=16));});
+test('truncated MP4 payload is rejected even with valid ftyp',async()=>{const truncated=mp4.slice(0,-1);assert.equal(await validateMp4Atoms(truncated.length,async(o,n)=>truncated.slice(o,o+n)),false);});
+test('ftyp alone cannot complete an unknown-size download',async()=>{const data=Uint8Array.from(atom('ftyp',[0,0,0,0]));assert.equal(await validateMp4Atoms(data.length,async(o,n)=>data.slice(o,o+n)),false);});
+test('invalid zero-length atom header fails closed',async()=>{assert.equal(await validateMp4Atoms(6,async()=>new Uint8Array(6)),false);});
