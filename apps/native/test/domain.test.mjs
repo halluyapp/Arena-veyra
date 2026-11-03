@@ -1,34 +1,146 @@
-import test from 'node:test';
-import assert from 'node:assert/strict';
-import { coordinates, playbackKey, chooseSource, safeHttps, validateCompleted, MEDIA_HEADERS } from '../src/domain.ts';
-const movie = { id: 'zh:m', title: 'Movie', type: 'movie', subjectId: 'm', detailPath: 'movie' };
-const series = { ...movie, id: 'zh:s', type: 'series' };
-test('movies consistently use real 0/0 wire coordinates', () => assert.deepEqual(coordinates(movie), {subjectId:'m',detailPath:'movie',season:0,episode:0}));
-test('series require a real episode', () => assert.throws(() => coordinates(series)));
-test('both identifiers are required', () => assert.throws(() => coordinates({...movie,detailPath:undefined})));
-test('series wire coordinates are not converted to zero based', () => assert.equal(coordinates(series,{id:'s2e3',seasonNumber:2,episodeNumber:3}).season,2));
-test('cross-season episodes cannot collide', () => assert.notEqual(playbackKey(series,{id:'1',seasonNumber:1,episodeNumber:1}),playbackKey(series,{id:'1',seasonNumber:2,episodeNumber:1})));
-const sources=[360,480,1080].map(height=>({id:String(height),height,label:`${height}p`,url:'https://cdn.example/video'}));
-test('mobile prefers actual 480p',()=>assert.equal(chooseSource(sources,0,false).height,480));
-test('mobile falls back to actual 360p',()=>assert.equal(chooseSource(sources.filter(s=>s.height!==480),0,false).height,360));
-test('TV auto prefers highest',()=>assert.equal(chooseSource(sources,0,true).height,1080));
-test('explicit quality is honored',()=>assert.equal(chooseSource(sources,360,true).height,360));
-test('empty source list stays empty',()=>assert.equal(chooseSource([],0,false),undefined));
-test('media URLs must be HTTPS and contain no embedded credentials',()=>{for(const url of ['http://cdn.example/v','file:///tmp/a','https://user:pass@cdn.example/v'])assert.throws(()=>safeHttps(url));});
-test('required headers are centralized',()=>{assert.equal(MEDIA_HEADERS.Origin,'https://www.moviebox.ph');assert.ok(MEDIA_HEADERS.Referer.endsWith('/'));assert.match(MEDIA_HEADERS['User-Agent'],/Android/);});
-const signature=[0,0,0,24,102,116,121,112,109,112,52,50];
-test('completed download requires measured size and MP4 signature',()=>assert.equal(validateCompleted(100,100,signature),true));
-test('short transfer never completes',()=>assert.equal(validateCompleted(99,100,signature),false));
-test('HTML response never completes',()=>assert.equal(validateCompleted(100,100,[60,104,116,109,108,62,32,32]),false));
-test('empty transfer never completes',()=>assert.equal(validateCompleted(0,0,signature),false));
-import { validateMp4Atoms } from '../src/domain.ts';
-const atom=(name,payload=[])=>{const length=8+payload.length;return [0,0,0,length,...Array.from(name).map(c=>c.charCodeAt(0)),...payload];};
-const mp4=Uint8Array.from([...atom('ftyp',[109,112,52,50]),...atom('moov',[0,0,0,0]),...atom('mdat',[1,2,3,4])]);
-test('complete MP4 atom layout validates without reading payload',async()=>{const reads=[];assert.equal(await validateMp4Atoms(mp4.length,async(offset,length)=>{reads.push(length);return mp4.slice(offset,offset+length);}),true);assert.ok(reads.every(n=>n<=16));});
-test('truncated MP4 payload is rejected even with valid ftyp',async()=>{const truncated=mp4.slice(0,-1);assert.equal(await validateMp4Atoms(truncated.length,async(o,n)=>truncated.slice(o,o+n)),false);});
-test('ftyp alone cannot complete an unknown-size download',async()=>{const data=Uint8Array.from(atom('ftyp',[0,0,0,0]));assert.equal(await validateMp4Atoms(data.length,async(o,n)=>data.slice(o,o+n)),false);});
-test('invalid zero-length atom header fails closed',async()=>{assert.equal(await validateMp4Atoms(6,async()=>new Uint8Array(6)),false);});
-import { privateFilename } from '../src/domain.ts';
-test('native destinations and filesystem URIs identify the same private path',()=>{const name=privateFilename('zh:123:s1:e2:q480');assert.ok(!name.includes('%'));assert.ok(!name.includes('/'));assert.ok(name.endsWith('.mp4'));});
-test('encoded identifier cannot collide with literal underscore escape',()=>assert.notEqual(privateFilename('zh:a'),privateFilename('zh_3Aa')));
-test('unbounded file identifiers fail rather than hitting filesystem limits',()=>assert.throws(()=>privateFilename('a'.repeat(221))));
+import test from "node:test";
+import assert from "node:assert/strict";
+import {
+  coordinates,
+  playbackKey,
+  chooseSource,
+  safeHttps,
+  validateCompleted,
+  MEDIA_HEADERS,
+} from "../src/domain.ts";
+const movie = {
+  id: "zh:m",
+  title: "Movie",
+  type: "movie",
+  subjectId: "m",
+  detailPath: "movie",
+};
+const series = { ...movie, id: "zh:s", type: "series" };
+test("movies consistently use real 0/0 wire coordinates", () =>
+  assert.deepEqual(coordinates(movie), {
+    subjectId: "m",
+    detailPath: "movie",
+    season: 0,
+    episode: 0,
+  }));
+test("series require a real episode", () =>
+  assert.throws(() => coordinates(series)));
+test("both identifiers are required", () =>
+  assert.throws(() => coordinates({ ...movie, detailPath: undefined })));
+test("series wire coordinates are not converted to zero based", () =>
+  assert.equal(
+    coordinates(series, { id: "s2e3", seasonNumber: 2, episodeNumber: 3 })
+      .season,
+    2,
+  ));
+test("cross-season episodes cannot collide", () =>
+  assert.notEqual(
+    playbackKey(series, { id: "1", seasonNumber: 1, episodeNumber: 1 }),
+    playbackKey(series, { id: "1", seasonNumber: 2, episodeNumber: 1 }),
+  ));
+const sources = [360, 480, 1080].map((height) => ({
+  id: String(height),
+  height,
+  label: `${height}p`,
+  url: "https://cdn.example/video",
+}));
+test("mobile prefers actual 480p", () =>
+  assert.equal(chooseSource(sources, 0, false).height, 480));
+test("mobile falls back to actual 360p", () =>
+  assert.equal(
+    chooseSource(
+      sources.filter((s) => s.height !== 480),
+      0,
+      false,
+    ).height,
+    360,
+  ));
+test("TV auto prefers highest", () =>
+  assert.equal(chooseSource(sources, 0, true).height, 1080));
+test("explicit quality is honored", () =>
+  assert.equal(chooseSource(sources, 360, true).height, 360));
+test("empty source list stays empty", () =>
+  assert.equal(chooseSource([], 0, false), undefined));
+test("media URLs must be HTTPS and contain no embedded credentials", () => {
+  for (const url of [
+    "http://cdn.example/v",
+    "file:///tmp/a",
+    "https://user:pass@cdn.example/v",
+  ])
+    assert.throws(() => safeHttps(url));
+});
+test("required headers are centralized", () => {
+  assert.equal(MEDIA_HEADERS.Origin, "https://www.moviebox.ph");
+  assert.ok(MEDIA_HEADERS.Referer.endsWith("/"));
+  assert.match(MEDIA_HEADERS["User-Agent"], /Android/);
+});
+const signature = [0, 0, 0, 24, 102, 116, 121, 112, 109, 112, 52, 50];
+test("completed download requires measured size and MP4 signature", () =>
+  assert.equal(validateCompleted(100, 100, signature), true));
+test("short transfer never completes", () =>
+  assert.equal(validateCompleted(99, 100, signature), false));
+test("HTML response never completes", () =>
+  assert.equal(
+    validateCompleted(100, 100, [60, 104, 116, 109, 108, 62, 32, 32]),
+    false,
+  ));
+test("empty transfer never completes", () =>
+  assert.equal(validateCompleted(0, 0, signature), false));
+import { validateMp4Atoms } from "../src/domain.ts";
+const atom = (name, payload = []) => {
+  const length = 8 + payload.length;
+  return [
+    0,
+    0,
+    0,
+    length,
+    ...Array.from(name).map((c) => c.charCodeAt(0)),
+    ...payload,
+  ];
+};
+const mp4 = Uint8Array.from([
+  ...atom("ftyp", [109, 112, 52, 50]),
+  ...atom("moov", [0, 0, 0, 0]),
+  ...atom("mdat", [1, 2, 3, 4]),
+]);
+test("complete MP4 atom layout validates without reading payload", async () => {
+  const reads = [];
+  assert.equal(
+    await validateMp4Atoms(mp4.length, async (offset, length) => {
+      reads.push(length);
+      return mp4.slice(offset, offset + length);
+    }),
+    true,
+  );
+  assert.ok(reads.every((n) => n <= 16));
+});
+test("truncated MP4 payload is rejected even with valid ftyp", async () => {
+  const truncated = mp4.slice(0, -1);
+  assert.equal(
+    await validateMp4Atoms(truncated.length, async (o, n) =>
+      truncated.slice(o, o + n),
+    ),
+    false,
+  );
+});
+test("ftyp alone cannot complete an unknown-size download", async () => {
+  const data = Uint8Array.from(atom("ftyp", [0, 0, 0, 0]));
+  assert.equal(
+    await validateMp4Atoms(data.length, async (o, n) => data.slice(o, o + n)),
+    false,
+  );
+});
+test("invalid zero-length atom header fails closed", async () => {
+  assert.equal(await validateMp4Atoms(6, async () => new Uint8Array(6)), false);
+});
+import { privateFilename } from "../src/domain.ts";
+test("native destinations and filesystem URIs identify the same private path", () => {
+  const name = privateFilename("zh:123:s1:e2:q480");
+  assert.ok(!name.includes("%"));
+  assert.ok(!name.includes("/"));
+  assert.ok(name.endsWith(".mp4"));
+});
+test("encoded identifier cannot collide with literal underscore escape", () =>
+  assert.notEqual(privateFilename("zh:a"), privateFilename("zh_3Aa")));
+test("unbounded file identifiers fail rather than hitting filesystem limits", () =>
+  assert.throws(() => privateFilename("a".repeat(221))));

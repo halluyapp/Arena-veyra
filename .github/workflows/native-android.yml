@@ -34,12 +34,16 @@ jobs:
         with:
           distribution: temurin
           java-version: '17'
+          cache: gradle
+          cache-dependency-path: |
+            apps/native/package-lock.json
+            android/**/*.gradle
       - uses: android-actions/setup-android@v4.0.4
       - name: Install native dependencies
         run: npm ci
       - name: Check native types
         run: npm run typecheck
-      - name: Test native domain rules
+      - name: Test native domain and download lifecycle
         run: npm test
       - name: Bundle native application
         run: npm run export
