@@ -62,3 +62,9 @@ export async function validateMp4Atoms(size: number, read: (offset: number, leng
   }
   return offset === size && ftyp && moov && mdat;
 }
+/** A URI-safe, reversible filename; never pass percent-escaped URI text as a native path. */
+export function privateFilename(id: string) {
+  const encoded = encodeURIComponent(id).replace(/_/g, '%5F').replace(/%/g, '_');
+  if (encoded.length > 220) throw new Error('This download identifier is too long to save safely.');
+  return `${encoded}.mp4`;
+}

@@ -4,7 +4,7 @@ import { createDownloadTask, getExistingDownloadTasks, setConfig, completeHandle
 import type { DownloadTask } from '@kesha-antonov/react-native-background-downloader';
 import { PermissionsAndroid, Platform } from 'react-native';
 import { api } from './api';
-import { Title, Episode, MEDIA_HEADERS, playbackKey, safeHttps, validateCompleted, validateMp4Atoms } from './domain';
+import { Title, Episode, MEDIA_HEADERS, playbackKey, safeHttps, validateCompleted, validateMp4Atoms, privateFilename } from './domain';
 export type Download = { id: string; item: Title; episode?: Episode; quality: number; state: 'queued'|'downloading'|'paused'|'failed'|'completed'|'removing'; bytes: number; expected: number; path: string; error?: string; expiresAt?: number };
 const KEY = 'veyra-native-downloads:v1';
 const directory = `${FS.documentDirectory}downloads/`;
@@ -113,7 +113,7 @@ class Downloads {
       const available = await FS.getFreeDiskStorageAsync();
       if (descriptor.sizeBytes && available < descriptor.sizeBytes + 64 * 1024 * 1024) throw new Error('Not enough free space for this video.');
       if (Platform.OS === 'android' && Number(Platform.Version) >= 33) await PermissionsAndroid.request(PermissionsAndroid.PERMISSIONS.POST_NOTIFICATIONS);
-      const path = `${directory}${encodeURIComponent(id)}.mp4`;
+      const path = `${directory}${privateFilename(id)}`;
       const previous = this.tasks.get(id); if (previous) await previous.stop();
       await FS.deleteAsync(path, { idempotent: true });
       const record: Download = { id, item, episode, quality, state: 'queued', bytes: 0, expected: descriptor.sizeBytes || 0, path, expiresAt: descriptor.expiresAt };

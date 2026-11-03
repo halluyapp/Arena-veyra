@@ -28,3 +28,7 @@ test('complete MP4 atom layout validates without reading payload',async()=>{cons
 test('truncated MP4 payload is rejected even with valid ftyp',async()=>{const truncated=mp4.slice(0,-1);assert.equal(await validateMp4Atoms(truncated.length,async(o,n)=>truncated.slice(o,o+n)),false);});
 test('ftyp alone cannot complete an unknown-size download',async()=>{const data=Uint8Array.from(atom('ftyp',[0,0,0,0]));assert.equal(await validateMp4Atoms(data.length,async(o,n)=>data.slice(o,o+n)),false);});
 test('invalid zero-length atom header fails closed',async()=>{assert.equal(await validateMp4Atoms(6,async()=>new Uint8Array(6)),false);});
+import { privateFilename } from '../src/domain.ts';
+test('native destinations and filesystem URIs identify the same private path',()=>{const name=privateFilename('zh:123:s1:e2:q480');assert.ok(!name.includes('%'));assert.ok(!name.includes('/'));assert.ok(name.endsWith('.mp4'));});
+test('encoded identifier cannot collide with literal underscore escape',()=>assert.notEqual(privateFilename('zh:a'),privateFilename('zh_3Aa')));
+test('unbounded file identifiers fail rather than hitting filesystem limits',()=>assert.throws(()=>privateFilename('a'.repeat(221))));
